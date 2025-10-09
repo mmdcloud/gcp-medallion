@@ -1,3 +1,47 @@
+#---------------------------------------------------------------
+# VPC Configuration
+#---------------------------------------------------------------
+module "consumer_vpc" {
+  source                          = "./modules/vpc"
+  vpc_name                        = "consumer-vpc"
+  delete_default_routes_on_create = false
+  auto_create_subnetworks         = false
+  routing_mode                    = "REGIONAL"
+  subnets = [
+    {
+      name                     = "consumer-subnet"
+      region                   = "${var.location}"
+      purpose                  = "PRIVATE"
+      role                     = "ACTIVE"
+      private_ip_google_access = true
+      ip_cidr_range            = "10.1.0.0/24"
+    }
+  ]
+  firewall_data = [
+    {
+      name          = "consumer-vpc-firewall-ssh"
+      source_ranges = ["0.0.0.0/0"]
+      allow_list = [
+        {
+          protocol = "tcp"
+          ports    = ["22"]
+        }
+      ]
+    },
+    {
+      name          = "consumer-vpc-firewall-http"
+      source_ranges = ["0.0.0.0/0"]
+      allow_list = [
+        {
+          protocol = "tcp"
+          ports    = ["80"]
+        }
+      ]
+    },
+  ]
+}
+
+
 # --------------------------------------------------------------
 # Bronze Bucket
 # --------------------------------------------------------------
@@ -54,12 +98,12 @@ resource "google_project_iam_member" "dataplex_admin" {
 
 # Storage access to bronze & silver buckets for Dataplex
 resource "google_storage_bucket_iam_member" "bronze_reader" {
-  bucket = google_storage_bucket.bronze.name
+  bucket = module.bronze_bucket.bucket_name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.dataplex_sa.email}"
 }
 resource "google_storage_bucket_iam_member" "silver_writer" {
-  bucket = google_storage_bucket.silver.name
+  bucket = module.silver_bucket.bucket_name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.dataplex_sa.email}"
 }
@@ -88,6 +132,9 @@ resource "google_dataplex_lake" "lake" {
   }
 }
 
+# --------------------------------------------------------------
+# Dataplex Zone
+# --------------------------------------------------------------
 resource "google_dataplex_zone" "bronze" {
   project  = var.project_id
   location = var.location
@@ -162,11 +209,13 @@ resource "google_dataplex_zone" "gold" {
   }
 
   resource_spec {
-    location_type = "BIGQUERY" # indicates this zone maps to BigQuery assets
+    location_type = "BIGQUERY"
   }
 }
 
-
+# --------------------------------------------------------------
+# Dataplex Assets
+# --------------------------------------------------------------
 resource "google_dataplex_asset" "bronze_gcs" {
   project       = var.project_id
   location      = var.location
@@ -245,7 +294,6 @@ resource "google_dataplex_asset" "gold_bq" {
   description  = "Analytics-ready tables in BigQuery"
 
   resource_spec {
-    # For BigQuery set name like: "projects/{project}/datasets/{dataset}"
     name = "projects/${var.project_id}/datasets/${google_bigquery_dataset.gold.dataset_id}"
     type = "BIGQUERY_DATASET"
   }
@@ -253,4 +301,112 @@ resource "google_dataplex_asset" "gold_bq" {
   labels = {
     zone = "gold"
   }
+}
+
+# --------------------------------------------------------------
+# Dataproc configuration
+# --------------------------------------------------------------
+resource "google_service_account" "dataproc_sa" {
+  account_id   = "dataproc-sa"
+  display_name = "Dataproc Service Account"
+}
+
+module "dataproc_cluster" {
+  source = "./modules/dataproc"
+  autoscaling_policy = {
+    name      = "dataproc-autoscaling-policy"
+    policy_id = "dataproc-autoscaling-policy"
+    worker_config = {
+      min_instances = 2
+      max_instances = 10
+    }
+    yarn_config = {
+      graceful_decommission_timeout = "PT10M"
+      scale_up_factor               = 0.8
+      scale_down_factor             = 0.2
+    }
+    cooldown_period = "PT5M"
+  }
+  cluster_name       = "dataproc-cluster"
+  region             = var.location
+  staging_bucket    = module.bronze_bucket.bucket_name
+  gce_cluster_config = {
+    network          = "default"
+    subnetwork       = ""     # empty = default subnetwork
+    service_account  = "${google_service_account.dataproc_sa.email}"
+    internal_ip_only = false  # set to true for private IP only           
+    tags             = []     # optional network tags
+  }
+  master_config = {
+    num_instances     = 1
+    machine_type      = "n1-standard-2"
+    boot_disk_type    = "pd-standard"
+    boot_disk_size_gb = 50
+  }
+  worker_config = {
+    num_instances     = 2
+    machine_type      = "n1-standard-2"     
+    boot_disk_size_gb = 50
+    boot_disk_type    = "pd-standard" 
+  }
+  software_config = {
+    image_version       = "2.0-debian10"
+    optional_components = ["ANACONDA", "JUPYTER"]
+  }
+}
+
+# --------------------------------------------------------------
+# Composer configuration
+# --------------------------------------------------------------
+module "composer" {
+  source = "./modules/composer"
+  composer_name = "composer-env"
+  region        = var.location
+  software_config = {
+    image_version  = "composer-2.0.16-airflow-2.2.5"
+    python_version = "3"
+    pypi_packages = {
+      "google-cloud-dataplex" = "1.0.0"
+      "google-cloud-storage"  = "1.42.3"
+      "pandas"                = "1.3.3"
+    }
+    env_variables = {
+      "ENV" = "prod"
+    }
+  }
+  node_config = {
+    machine_type    = "n2-standard-8"
+    network         = "default"
+    subnetwork      = ""  # empty = default subnetwork
+    service_account = google_service_account.dataproc_sa.email
+    disk_size_gb    = 100
+  }
+  
+}
+# --------------------------------------------------------------
+# BigQuery Dataset and Tables
+# --------------------------------------------------------------
+module "bigquery" {
+  source     = "../modules/bigquery"
+  dataset_id = "pubsubbqdataset"
+  tables = [{
+    table_id            = "pubsubbq-table"
+    deletion_protection = false
+    schema              = <<EOF
+[
+  {
+    "name": "name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "The data"
+  },
+  {
+    "name": "city",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "The data"
+  }
+]
+EOF
+  }]
 }
