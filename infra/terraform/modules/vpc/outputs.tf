@@ -10,3 +10,7 @@ output "subnets" {
   value = google_compute_subnetwork.subnets[*]
 }
 
+output "name" {
+  value = google_compute_network.vpc.name
+}
+

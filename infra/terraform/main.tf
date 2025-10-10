@@ -1,25 +1,34 @@
+
 #---------------------------------------------------------------
 # VPC Configuration
 #---------------------------------------------------------------
-module "consumer_vpc" {
+module "vpc" {
   source                          = "./modules/vpc"
-  vpc_name                        = "consumer-vpc"
+  vpc_name                        = "medallion-vpc"
   delete_default_routes_on_create = false
   auto_create_subnetworks         = false
   routing_mode                    = "REGIONAL"
   subnets = [
     {
-      name                     = "consumer-subnet"
+      name                     = "dataproc-subnet"
       region                   = "${var.location}"
       purpose                  = "PRIVATE"
       role                     = "ACTIVE"
       private_ip_google_access = true
       ip_cidr_range            = "10.1.0.0/24"
+    },
+    {
+      name                     = "composer-subnet"
+      region                   = "${var.location}"
+      purpose                  = "PRIVATE"
+      role                     = "ACTIVE"
+      private_ip_google_access = true
+      ip_cidr_range            = "10.2.0.0/24"
     }
   ]
   firewall_data = [
     {
-      name          = "consumer-vpc-firewall-ssh"
+      name          = "medallion-vpc-firewall-ssh"
       source_ranges = ["0.0.0.0/0"]
       allow_list = [
         {
@@ -29,7 +38,7 @@ module "consumer_vpc" {
       ]
     },
     {
-      name          = "consumer-vpc-firewall-http"
+      name          = "medallion-vpc-firewall-http"
       source_ranges = ["0.0.0.0/0"]
       allow_list = [
         {
@@ -40,7 +49,6 @@ module "consumer_vpc" {
     },
   ]
 }
-
 
 # --------------------------------------------------------------
 # Bronze Bucket
@@ -81,6 +89,9 @@ module "gold_bucket" {
   uniform_bucket_level_access = true
 }
 
+# --------------------------------------------------------------
+# Data Governance (Dataplex)
+# --------------------------------------------------------------
 # Dataplex needs service account permissions to scan assets and run tasks.
 # Typically you will create a dedicated service account and grant roles/dataplex.* and storage/bigquery access.
 
@@ -327,15 +338,15 @@ module "dataproc_cluster" {
     }
     cooldown_period = "PT5M"
   }
-  cluster_name       = "dataproc-cluster"
-  region             = var.location
-  staging_bucket    = module.bronze_bucket.bucket_name
+  cluster_name   = "dataproc-cluster"
+  region         = var.location
+  staging_bucket = module.bronze_bucket.bucket_name
   gce_cluster_config = {
-    network          = "default"
-    subnetwork       = ""     # empty = default subnetwork
+    network          = module.vpc.name
+    subnetwork       = module.vpc.subnets[0].name
     service_account  = "${google_service_account.dataproc_sa.email}"
-    internal_ip_only = false  # set to true for private IP only           
-    tags             = []     # optional network tags
+    internal_ip_only = false           
+    tags             = []
   }
   master_config = {
     num_instances     = 1
@@ -345,9 +356,9 @@ module "dataproc_cluster" {
   }
   worker_config = {
     num_instances     = 2
-    machine_type      = "n1-standard-2"     
+    machine_type      = "n1-standard-2"
     boot_disk_size_gb = 50
-    boot_disk_type    = "pd-standard" 
+    boot_disk_type    = "pd-standard"
   }
   software_config = {
     image_version       = "2.0-debian10"
@@ -358,8 +369,18 @@ module "dataproc_cluster" {
 # --------------------------------------------------------------
 # Composer configuration
 # --------------------------------------------------------------
+module "airflow_dags_bucket" {
+  source                      = "../modules/gcs"
+  location                    = var.location
+  name                        = "airflow-dags-bucket"
+  cors                        = []
+  contents                    = []
+  force_destroy               = true
+  uniform_bucket_level_access = true
+}
+
 module "composer" {
-  source = "./modules/composer"
+  source        = "./modules/composer"
   composer_name = "composer-env"
   region        = var.location
   software_config = {
@@ -376,13 +397,13 @@ module "composer" {
   }
   node_config = {
     machine_type    = "n2-standard-8"
-    network         = "default"
-    subnetwork      = ""  # empty = default subnetwork
+    network         = module.vpc.name
+    subnetwork      = module.vpc.subnets[1].name
     service_account = google_service_account.dataproc_sa.email
     disk_size_gb    = 100
   }
-  
 }
+
 # --------------------------------------------------------------
 # BigQuery Dataset and Tables
 # --------------------------------------------------------------
