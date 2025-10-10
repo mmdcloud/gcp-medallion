@@ -26,35 +26,14 @@ module "vpc" {
       ip_cidr_range            = "10.2.0.0/24"
     }
   ]
-  firewall_data = [
-    {
-      name          = "medallion-vpc-firewall-ssh"
-      source_ranges = ["0.0.0.0/0"]
-      allow_list = [
-        {
-          protocol = "tcp"
-          ports    = ["22"]
-        }
-      ]
-    },
-    {
-      name          = "medallion-vpc-firewall-http"
-      source_ranges = ["0.0.0.0/0"]
-      allow_list = [
-        {
-          protocol = "tcp"
-          ports    = ["80"]
-        }
-      ]
-    },
-  ]
+  firewall_data = []
 }
 
 # --------------------------------------------------------------
 # Bronze Bucket
 # --------------------------------------------------------------
 module "bronze_bucket" {
-  source                      = "../modules/gcs"
+  source                      = "./modules/gcs"
   location                    = var.location
   name                        = "bronze-bucket"
   cors                        = []
@@ -66,8 +45,8 @@ module "bronze_bucket" {
 # --------------------------------------------------------------
 # Silver Bucket
 # --------------------------------------------------------------
-module "bronze_bucket" {
-  source                      = "../modules/gcs"
+module "silver_bucket" {
+  source                      = "./modules/gcs"
   location                    = var.location
   name                        = "silver-bucket"
   cors                        = []
@@ -80,7 +59,7 @@ module "bronze_bucket" {
 # Gold Bucket
 # --------------------------------------------------------------
 module "gold_bucket" {
-  source                      = "../modules/gcs"
+  source                      = "./modules/gcs"
   location                    = var.location
   name                        = "gold-bucket"
   cors                        = []
@@ -121,12 +100,11 @@ resource "google_storage_bucket_iam_member" "silver_writer" {
 
 # BigQuery access for Gold
 resource "google_bigquery_dataset_iam_member" "gold_bq_writer" {
-  dataset_id = google_bigquery_dataset.gold.dataset_id
+  dataset_id = module.bigquery.dataset_id
   project    = var.project_id
   role       = "roles/bigquery.dataEditor"
   member     = "serviceAccount:${google_service_account.dataplex_sa.email}"
 }
-
 
 # --------------------------------------------------------------
 # Dataplex Lake
@@ -161,14 +139,13 @@ resource "google_dataplex_zone" "bronze" {
     }
   }
   display_name = "Bronze (raw)"
-  type         = "RAW" # RAW zone for raw ingestion
+  type         = "RAW"
   description  = "Raw immutable landing area (GCS)"
   labels = {
     tier = "bronze"
   }
-
   resource_spec {
-    location_type = "STORAGE" # zone manages storage assets
+    location_type = "STORAGE"
   }
 }
 
@@ -192,7 +169,6 @@ resource "google_dataplex_zone" "silver" {
   labels = {
     tier = "silver"
   }
-
   resource_spec {
     location_type = "STORAGE"
   }
@@ -218,7 +194,6 @@ resource "google_dataplex_zone" "gold" {
   labels = {
     tier = "gold"
   }
-
   resource_spec {
     location_type = "BIGQUERY"
   }
@@ -244,13 +219,10 @@ resource "google_dataplex_asset" "bronze_gcs" {
   name         = "${var.project_id}-lake-bronze-gcs"
   display_name = "Bronze GCS objects"
   description  = "Raw landing data in GCS"
-
   resource_spec {
-    # For storage bucket asset, set name in the form "projects/_/buckets/{bucket}"
-    name = "projects/${var.project_id}/locations/${var.location}/buckets/${google_storage_bucket.bronze.name}"
+    name = "projects/${var.project_id}/locations/${var.location}/buckets/${module.bronze_bucket.bucket_name}"
     type = "STORAGE_BUCKET"
   }
-
   labels = {
     zone = "bronze"
   }
@@ -274,12 +246,10 @@ resource "google_dataplex_asset" "silver_gcs" {
   }
   display_name = "Silver GCS objects"
   description  = "Processed / canonical data in GCS"
-
   resource_spec {
-    name = "projects/${var.project_id}/locations/${var.location}/buckets/${google_storage_bucket.silver.name}"
+    name = "projects/${var.project_id}/locations/${var.location}/buckets/${module.silver_bucket.bucket_name}"
     type = "STORAGE_BUCKET"
   }
-
   labels = {
     zone = "silver"
   }
@@ -303,12 +273,10 @@ resource "google_dataplex_asset" "gold_bq" {
   }
   display_name = "Gold BigQuery dataset"
   description  = "Analytics-ready tables in BigQuery"
-
   resource_spec {
-    name = "projects/${var.project_id}/datasets/${google_bigquery_dataset.gold.dataset_id}"
+    name = "projects/${var.project_id}/datasets/${module.bigquery.dataset_id}"
     type = "BIGQUERY_DATASET"
   }
-
   labels = {
     zone = "gold"
   }
@@ -325,7 +293,6 @@ resource "google_service_account" "dataproc_sa" {
 module "dataproc_cluster" {
   source = "./modules/dataproc"
   autoscaling_policy = {
-    name      = "dataproc-autoscaling-policy"
     policy_id = "dataproc-autoscaling-policy"
     worker_config = {
       min_instances = 2
@@ -345,7 +312,7 @@ module "dataproc_cluster" {
     network          = module.vpc.name
     subnetwork       = module.vpc.subnets[0].name
     service_account  = "${google_service_account.dataproc_sa.email}"
-    internal_ip_only = false           
+    internal_ip_only = false
     tags             = []
   }
   master_config = {
@@ -370,7 +337,7 @@ module "dataproc_cluster" {
 # Composer configuration
 # --------------------------------------------------------------
 module "airflow_dags_bucket" {
-  source                      = "../modules/gcs"
+  source                      = "./modules/gcs"
   location                    = var.location
   name                        = "airflow-dags-bucket"
   cors                        = []
@@ -408,7 +375,7 @@ module "composer" {
 # BigQuery Dataset and Tables
 # --------------------------------------------------------------
 module "bigquery" {
-  source     = "../modules/bigquery"
+  source     = "./modules/bigquery"
   dataset_id = "pubsubbqdataset"
   tables = [{
     table_id            = "pubsubbq-table"

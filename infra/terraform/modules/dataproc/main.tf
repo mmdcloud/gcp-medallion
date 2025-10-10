@@ -1,5 +1,4 @@
 resource "google_dataproc_autoscaling_policy" "autoscaling_policy" {
-  name      = var.autoscaling_policy.name
   policy_id = var.autoscaling_policy.policy_id
   basic_algorithm {
     cooldown_period = var.autoscaling_policy.cooldown_period

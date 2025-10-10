@@ -50,7 +50,6 @@ variable "software_config" {
 
 variable "autoscaling_policy" {
   type = object({
-    name      = string
     policy_id = string
     worker_config = object({
       min_instances = number
@@ -61,6 +60,6 @@ variable "autoscaling_policy" {
       scale_up_factor               = number
       scale_down_factor             = number
     })
-    cooldown_period = number
+    cooldown_period = string
   })
 }
