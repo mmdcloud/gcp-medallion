@@ -1,4 +1,3 @@
-
 #---------------------------------------------------------------
 # VPC Configuration
 #---------------------------------------------------------------
@@ -75,7 +74,7 @@ module "gold_bucket" {
 # Typically you will create a dedicated service account and grant roles/dataplex.* and storage/bigquery access.
 
 resource "google_service_account" "dataplex_sa" {
-  account_id   = "${var.project_id}-dataplex-sa"
+  account_id   = "dataplex-sa"
   display_name = "Dataplex service account for medallion pipelines"
 }
 
@@ -351,7 +350,7 @@ module "composer" {
   composer_name = "composer-env"
   region        = var.location
   software_config = {
-    image_version  = "composer-2.0.16-airflow-2.2.5"
+    image_version  = "composer-3-airflow-2"
     python_version = "3"
     pypi_packages = {
       "google-cloud-dataplex" = "1.0.0"
@@ -359,7 +358,8 @@ module "composer" {
       "pandas"                = "1.3.3"
     }
     env_variables = {
-      "ENV" = "prod"
+      "ENV"       = "prod"
+      DAGS_FOLDER = "gs://${module.airflow_dags_bucket.bucket_name}/dags"
     }
   }
   node_config = {

@@ -1,6 +1,6 @@
 resource "google_composer_environment" "composer_env" {
   name   = var.composer_name
-  region = var.region
+  region = var.region  
   config {    
     # Airflow settings
     software_config {
@@ -23,6 +23,6 @@ resource "google_composer_environment" "composer_env" {
     private_environment_config {      
       master_ipv4_cidr_block    = "10.10.0.0/28"
       web_server_ipv4_cidr_block = "10.10.1.0/28"
-    }    
-  }
+    }        
+  }  
 }
