@@ -7,3 +7,8 @@ variable "project_id" {
   type    = string
   default = "encoded-alpha-457108-e8"
 }
+
+variable "environment" {
+  type    = string
+  default = "prod"
+}

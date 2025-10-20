@@ -2,14 +2,14 @@
 # VPC Configuration
 #---------------------------------------------------------------
 module "vpc" {
-  source                          = "./modules/vpc"
-  vpc_name                        = "medallion-vpc"
+  source                          = "../../modules/vpc"
+  vpc_name                        = "medallion-vpc-${var.environment}"
   delete_default_routes_on_create = false
   auto_create_subnetworks         = false
   routing_mode                    = "REGIONAL"
   subnets = [
     {
-      name                     = "dataproc-subnet"
+      name                     = "dataproc-subnet-${var.environment}"
       region                   = "${var.location}"
       purpose                  = "PRIVATE"
       role                     = "ACTIVE"
@@ -17,7 +17,7 @@ module "vpc" {
       ip_cidr_range            = "10.1.0.0/24"
     },
     {
-      name                     = "composer-subnet"
+      name                     = "composer-subnet-${var.environment}"
       region                   = "${var.location}"
       purpose                  = "PRIVATE"
       role                     = "ACTIVE"
@@ -32,9 +32,9 @@ module "vpc" {
 # Bronze Bucket
 # --------------------------------------------------------------
 module "bronze_bucket" {
-  source                      = "./modules/gcs"
+  source                      = "../../modules/gcs"
   location                    = var.location
-  name                        = "bronze-bucket"
+  name                        = "bronze-bucket-${var.environment}"
   cors                        = []
   contents                    = []
   force_destroy               = true
@@ -45,9 +45,9 @@ module "bronze_bucket" {
 # Silver Bucket
 # --------------------------------------------------------------
 module "silver_bucket" {
-  source                      = "./modules/gcs"
+  source                      = "../../modules/gcs"
   location                    = var.location
-  name                        = "silver-bucket"
+  name                        = "silver-bucket-${var.environment}"
   cors                        = []
   contents                    = []
   force_destroy               = true
@@ -58,9 +58,9 @@ module "silver_bucket" {
 # Gold Bucket
 # --------------------------------------------------------------
 module "gold_bucket" {
-  source                      = "./modules/gcs"
+  source                      = "../../modules/gcs"
   location                    = var.location
-  name                        = "gold-bucket"
+  name                        = "gold-bucket-${var.environment}"
   cors                        = []
   contents                    = []
   force_destroy               = true
@@ -111,7 +111,7 @@ resource "google_bigquery_dataset_iam_member" "gold_bq_writer" {
 resource "google_dataplex_lake" "lake" {
   project      = var.project_id
   location     = var.location
-  name         = "${var.project_id}-lake"
+  name         = "${var.project_id}-lake-${var.environment}"
   display_name = "Medallion Lake (${var.project_id})"
   description  = "Dataplex lake that contains bronze/silver/gold zones for medallion architecture"
   labels = {
@@ -127,7 +127,7 @@ resource "google_dataplex_zone" "bronze" {
   project  = var.project_id
   location = var.location
   lake     = google_dataplex_lake.lake.name
-  name     = "${var.project_id}-lake-bronze"
+  name     = "${var.project_id}-lake-bronze-${var.environment}"
   discovery_spec {
     enabled          = true
     include_patterns = ["**"]
@@ -152,7 +152,7 @@ resource "google_dataplex_zone" "silver" {
   project  = var.project_id
   location = var.location
   lake     = google_dataplex_lake.lake.name
-  name     = "${var.project_id}-lake-silver"
+  name     = "${var.project_id}-lake-silver-${var.environment}"
   discovery_spec {
     enabled          = true
     include_patterns = ["**"]
@@ -177,7 +177,7 @@ resource "google_dataplex_zone" "gold" {
   project  = var.project_id
   location = var.location
   lake     = google_dataplex_lake.lake.name
-  name     = "${var.project_id}-lake-gold"
+  name     = "${var.project_id}-lake-gold-${var.environment}"
   discovery_spec {
     enabled          = true
     include_patterns = ["**"]
@@ -215,7 +215,7 @@ resource "google_dataplex_asset" "bronze_gcs" {
       delimiter   = ","
     }
   }
-  name         = "${var.project_id}-lake-bronze-gcs"
+  name         = "${var.project_id}-lake-bronze-gcs-${var.environment}"
   display_name = "Bronze GCS objects"
   description  = "Raw landing data in GCS"
   resource_spec {
@@ -233,7 +233,7 @@ resource "google_dataplex_asset" "silver_gcs" {
   location      = var.location
   lake          = google_dataplex_lake.lake.name
   dataplex_zone = google_dataplex_zone.silver.name
-  name          = "${var.project_id}-lake-silver-gcs"
+  name          = "${var.project_id}-lake-silver-gcs-${var.environment}"
   discovery_spec {
     enabled          = true
     include_patterns = ["**"]
@@ -260,7 +260,7 @@ resource "google_dataplex_asset" "gold_bq" {
   location      = var.location
   lake          = google_dataplex_lake.lake.name
   dataplex_zone = google_dataplex_zone.gold.name
-  name          = "${var.project_id}-lake-gold-bq"
+  name          = "${var.project_id}-lake-gold-bq-${var.environment}"
   discovery_spec {
     enabled          = true
     include_patterns = ["**"]
@@ -290,9 +290,9 @@ resource "google_service_account" "dataproc_sa" {
 }
 
 module "dataproc_cluster" {
-  source = "./modules/dataproc"
+  source = "../../modules/dataproc"
   autoscaling_policy = {
-    policy_id = "dataproc-autoscaling-policy"
+    policy_id = "dataproc-autoscaling-policy-${var.environment}"
     worker_config = {
       min_instances = 2
       max_instances = 10
@@ -304,7 +304,7 @@ module "dataproc_cluster" {
     }
     cooldown_period = "PT5M"
   }
-  cluster_name   = "dataproc-cluster"
+  cluster_name   = "dataproc-cluster-${var.environment}"
   region         = var.location
   staging_bucket = module.bronze_bucket.bucket_name
   gce_cluster_config = {
@@ -336,9 +336,9 @@ module "dataproc_cluster" {
 # Composer configuration
 # --------------------------------------------------------------
 module "airflow_dags_bucket" {
-  source                      = "./modules/gcs"
+  source                      = "../../modules/gcs"
   location                    = var.location
-  name                        = "airflow-dags-bucket"
+  name                        = "airflow-dags-bucket-${var.environment}"
   cors                        = []
   contents                    = []
   force_destroy               = true
@@ -346,8 +346,8 @@ module "airflow_dags_bucket" {
 }
 
 module "composer" {
-  source        = "./modules/composer"
-  composer_name = "composer-env"
+  source        = "../../modules/composer"
+  composer_name = "composer-env-${var.environment}"
   region        = var.location
   software_config = {
     image_version  = "composer-3-airflow-2"
@@ -375,8 +375,8 @@ module "composer" {
 # BigQuery Dataset and Tables
 # --------------------------------------------------------------
 module "bigquery" {
-  source     = "./modules/bigquery"
-  dataset_id = "pubsubbqdataset"
+  source     = "../../modules/bigquery"
+  dataset_id = "pubsubbqdataset-${var.environment}"
   tables = [{
     table_id            = "pubsubbq-table"
     deletion_protection = false
